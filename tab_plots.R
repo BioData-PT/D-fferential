@@ -1,0 +1,250 @@
+
+source("mod_filter_table.R")
+
+library(ggplot2)
+library(reshape2)
+
+
+# Density plot UI
+#################################################
+mod_plot_densityUI <- function(id, options) {
+  ns <- NS(id)
+  
+  col.choices <- c("None", "SampleID")
+  if (!is.null(options$metadata)) {
+    col.choices <- c(col.choices, colnames(options$metadata))
+  }
+  
+  tagList(
+    bsCollapsePanel("Options", 
+      inputPanel(mod_filter_tableUI(ns("mod_filter"), options$dataframe)),
+      inputPanel(
+        selectInput(ns("sel_scale"), label = "Scale", 
+                    choices = c("Linear"="identity", 
+                                "Log2"="log2", 
+                                "Log10"="log10"), selected = "identity"),
+        selectInput(ns("sel_col"), "Color", choices = col.choices),
+        selectInput(ns("sel_lty"), "Line type", choices = col.choices),
+        checkboxInput(ns("chk_legend"), label = "Show legend", value = TRUE)
+      )
+    ),
+    plotOutput(ns("my_plot"))
+  )
+}
+
+# Density plot server
+#################################################
+mod_plot_densityServer <- function(input, output, session, options) {
+  # this makes a copy of the provided data
+  dataframe <- options$dataframe
+  metadata <- options$metadata
+  
+  filtered <- callModule(mod_filter_tableServer, "mod_filter", reactive(dataframe))
+
+  data.points <- reactive({
+    req(filtered())
+    
+    validate(need(ncol(filtered()) > 0, "No columns."))
+    
+    mdf <- melt(filtered())
+    colnames(mdf) <- c("SampleID", "value")
+    
+    if (!is.null(metadata)) {
+      mdf <- cbind(mdf, metadata[ match(mdf$SampleID, rownames(metadata)), ])
+    }
+    
+    return(mdf)
+  })
+  
+  density.plot <- reactive({
+    mdf <- data.points()
+    
+    color_by <- if (input$sel_col == "None") NULL else input$sel_col
+    lty_by <- if (input$sel_lty == "None") NULL else input$sel_lty
+    trans <- input$sel_scale
+    legend <- input$chk_legend
+
+    plot.fun <- function() {
+      p <- ggplot(mdf, aes_string(x="value", col=color_by, lty=lty_by)) + 
+        geom_density() +
+        scale_x_continuous(trans=trans)
+      
+      if (legend == FALSE) {
+        p <- p + theme(legend.position = "none")
+      }
+      
+      return (p)
+    }
+    
+    return(plot.fun)
+  })
+
+  output$my_plot <- renderPlot({
+    density.plot()()
+  })
+  
+  return(list(
+    plot.fun = density.plot
+  ))
+}
+
+# Boxplot plot UI
+#################################################
+mod_plot_boxplotUI <- function(id, options) {
+  ns <- NS(id)
+  
+  col.choices <- c("None", "SampleID")
+  if (!is.null(options$metadata)) {
+    col.choices <- c(col.choices, colnames(options$metadata))
+  }
+  
+  tagList(
+    bsCollapsePanel("Options", 
+      inputPanel(mod_filter_tableUI(ns("mod_filter"), options$dataframe)),
+      inputPanel(
+        selectInput(ns("sel_scale"), label = "Scale", 
+                    choices = c("Linear"="identity", 
+                                "Log2"="log2", 
+                                "Log10"="log10"), selected = "identity"),
+        selectInput(ns("sel_group"), "Group by", choices = col.choices[ -1 ]),
+        selectInput(ns("sel_col"), "Color", choices = col.choices),
+        selectInput(ns("sel_lty"), "Line type", choices = col.choices),
+        checkboxInput(ns("check_notch"), "Show notch"),
+        checkboxInput(ns("chk_legend"), label = "Show legend", value = TRUE)
+      )
+    ),
+    plotOutput(ns("my_plot"))
+  )
+}
+
+# Boxplot plot server
+#################################################
+mod_plot_boxplotServer <- function(input, output, session, options) {
+  # this makes a copy of the provided data
+  dataframe <- options$dataframe
+  metadata <- options$metadata
+  
+  filtered <- callModule(mod_filter_tableServer, "mod_filter", reactive(dataframe))
+  
+  data.points <- reactive({
+    req(filtered())
+    
+    validate(need(ncol(filtered()) > 0, "No columns."))
+    
+    mdf <- melt(filtered())
+    colnames(mdf) <- c("SampleID", "value")
+    
+    if (!is.null(metadata)) {
+      mdf <- cbind(mdf, metadata[ match(mdf$SampleID, rownames(metadata)), ])
+    }
+    
+    return(mdf)
+  })
+  
+  boxplot.plot <- reactive({
+    mdf <- data.points()
+    
+    group_by <- input$sel_group
+    color_by <- if (input$sel_col == "None") NULL else input$sel_col
+    lty_by <- if (input$sel_lty == "None") NULL else input$sel_lty
+    trans <- input$sel_scale
+    legend <- input$chk_legend
+    
+    plot.fun <- function() {
+      p <- ggplot(mdf, aes_string(y="value", x=group_by, fill=color_by, lty=lty_by)) + 
+        geom_boxplot() +
+        scale_y_continuous(trans=trans)
+      
+      if (legend == FALSE) {
+        p <- p + theme(legend.position = "none")
+      }
+      
+      return (p)
+    }
+    
+    return(plot.fun)
+  })
+  
+  output$my_plot <- renderPlot({
+    boxplot.plot()()
+  })
+  
+  return(list(
+    plot.fun = boxplot.plot
+  ))
+}
+
+
+
+
+# Plots tab UI
+#################################################
+tab_plotsUI <- function(id) {
+  ns <- NS(id)
+ 
+  main.panel.ui <- tagList(
+    div(id = "elementsHead")
+  )
+  
+  sidebarLayout(
+    sidebarPanel(
+      selectInput(ns("sel_plot_type"), label = "Type", 
+                  choices = c("Boxplot", "Density")),
+      actionButton(ns("btn_add"), label = "Add plot")),
+    mainPanel(main.panel.ui))
+}
+
+# Plots tab Server
+#################################################
+tab_plotsServer <- function(input, output, session, sessionData) {
+  plot.creation.data <- reactive({
+    list(
+      "Density" = list(
+        ui.fun = mod_plot_densityUI,
+        server.fun = mod_plot_densityServer,
+        options = list(
+          dataframe = sessionData$dataframe(),
+          metadata = sessionData$metadata(),
+          type = "Density"
+        )),
+      "Boxplot" = list(
+        ui.fun = mod_plot_boxplotUI,
+        server.fun = mod_plot_boxplotServer,
+        options = list(
+          dataframe = sessionData$dataframe(),
+          metadata = sessionData$metadata(),
+          type = "Boxplot"
+        ))
+    )
+  })
+  
+  elem_list <- reactiveValues()
+  
+  insert.plot <- function(id, title, plot.options) {
+    plot.ui <- plot.options$ui.fun(session$ns(id), plot.options$options)
+    plot.ui <- bsCollapse(id = paste0(id, "_collapse"), open = title, bsCollapsePanel(title = title, plot.ui))
+
+    insertUI(selector = "#elementsHead",
+             where = "beforeBegin",
+             ui = plot.ui)
+
+    callModule(plot.options$server.fun, id = id, plot.options$options)
+  }
+  
+  observeEvent(input$btn_add, {
+    n <- length(names(elem_list)) + 1
+    id <- paste0("elem_", n)
+
+    plot.options <- plot.creation.data()[[ input$sel_plot_type ]]
+    
+    elem_list[[ id ]] <- insert.plot(id, input$sel_plot_type, plot.options)
+  })
+  
+  sessionData$plots <- elem_list
+  
+  return(sessionData)
+}
+
+
+
+

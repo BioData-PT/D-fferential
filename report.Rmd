@@ -1,0 +1,55 @@
+---
+title: "D-fferential Analysis Report"
+date: '`r format(Sys.time(), "%d %B, %Y")`'
+output: 
+  html_document:
+    toc: true
+params: 
+  dataframe: NA
+  metadata: NA
+  plots: NA
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+dataframe <- params$dataframe
+metadata <- params$metadata
+plots <- params$plots
+```
+
+# Summary of count data
+
+```{r}
+df <- data.frame(row.names = c("Number of genes", "Number of samples", "Number of NA's"),
+                 Value = c(nrow(dataframe), ncol(dataframe), sum(is.na(dataframe))))
+
+knitr::kable(df)
+```
+
+# Plots
+
+```{r}
+for (p in plots) {
+  print(p())
+}
+```
+
+# Differential expression analysis
+
+```{r}
+
+```
+
+# GO enrichment analysis
+
+```{r}
+
+```
+
+# Session Information
+
+```{r}
+sessionInfo()
+```
+
