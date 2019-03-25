@@ -10,15 +10,21 @@ tab_exportUI <- function(id) {
   
   tagList(
     useShinyjs(),
-    h4("Differential expression results"),
-    uiOutput(ns("ui_de_tables")),
-    h4("GO enrichment results"),
-    uiOutput(ns("ui_go_tables")),
-    h4("Analysis report"),
-    inputPanel(radioButtons(ns("radio_format"), label = "Output format", choices = c("HTML", "Pdf", "Doc"))),
+    box(width=12,
+      h4("Differential expression results"),
+      uiOutput(ns("ui_de_tables"))),
+    box(width=12,
+      h4("GO enrichment results"),
+      uiOutput(ns("ui_go_tables"))),
+    box(width=12,
+      verbatimTextOutput(ns("txt_session")))
+    #h4("Analysis report"),
+    #inputPanel(radioButtons(ns("radio_format"), label = "Output format", choices = c("HTML", "Pdf", "Doc"))),
+    
     #summary.ui,
     #uiOutput(ns("uiSections")),
-    downloadButton(ns("report"), "Generate report")
+    
+    #downloadButton(ns("report"), "Generate report")
   )
 }
 
@@ -123,7 +129,8 @@ tab_exportServer <- function(input, output, session, sessionData) {
       # Set up parameters to pass to Rmd document
       params <- list(dataframe = sessionData$dataframe(),
                      metadata = sessionData$metadata(),
-                     plots = plots)
+                     plots = plots,
+                     de_results = sessionData$de_results)
       
       withProgress(message = "Generating report...", {
         rmarkdown::render(tempReport,
@@ -133,6 +140,10 @@ tab_exportServer <- function(input, output, session, sessionData) {
       })
     }
   )
+  
+  output$txt_session <- renderPrint({
+    sessionInfo()
+  })
   
   return(sessionData)
   

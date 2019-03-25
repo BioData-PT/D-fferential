@@ -8,14 +8,20 @@ params:
   dataframe: NA
   metadata: NA
   plots: NA
+  de_results: NA
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(collapse = TRUE)
 
 dataframe <- params$dataframe
 metadata <- params$metadata
 plots <- params$plots
+```
+
+```{r imports, echo=FALSE}
+#library(UBIquitous)
 ```
 
 # Summary of count data
@@ -29,17 +35,37 @@ knitr::kable(df)
 
 # Plots
 
-```{r}
-for (p in plots) {
-  print(p())
-}
-```
 
 # Differential expression analysis
 
-```{r}
+```{r, results='asis'}
+for (res in params$de_results$data) {
+  cat("##", res$id, "\n\n")
+  
+  print(knitr::kable(head(res$tab)))
 
+  cat("\n\n")
+  
+  print(res$volcano.plot.fun())
+  
+  cat("\n\n")
+}
 ```
+
+
+```{r, results='asis'}
+# sections <- lapply(params$de_results$data, function(res) {
+#   volcano <- figure_chunk(fun = res$volcano.plot.fun, title = "Volcano plot", description = "Volcano plot, showing the relationship between log2 fold-change and evidence of differential expression.")
+#   ma <- figure_chunk(fun = res$ma.plot.fun, title = "MA plot", description = "MA plot, showing the relationship between mean expression and log2 fold-change.", include.pdf = TRUE)
+#   
+#   UBIquitous::section(res$id, chunks = list(volcano=volcano, ma=ma))
+# })
+# 
+# for (section in sections) {
+#   cat(render_section(section, depth=2))
+# }
+```
+
 
 # GO enrichment analysis
 

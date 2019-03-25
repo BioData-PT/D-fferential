@@ -101,7 +101,6 @@ mod_edgeRClassicServer <- function(input, output, session, dataframe, de.input) 
     return(cfact)
   })
   
-  
   # do edgeR when button is clicked
   result <- reactive({
     counts <- expr.matrix()
@@ -149,7 +148,6 @@ mod_edgeRClassicServer <- function(input, output, session, dataframe, de.input) 
       genes.diff = rownames(topgenes$table)[ which(topgenes$table$FDR < input$num_fdr & abs(topgenes$table$logFC) >= input$num_logfc) ]
     )
     
-    #results[[ id ]] <- result
     return(result)
   })
   
@@ -364,16 +362,32 @@ tab_deUI <- function(id) {
     hr(),
     tabsetPanel(
       tabPanel("Plots", 
-               plotOutput(ns("volcano_plot"), click = ns("volcano_plot_click")),
+               # inputPanel(
+               #   radioButtons(ns("radio_volcano_type"), label = "Plot type", )
+               # ),
+               plotOutput(ns("volcano_plot")),
                helpText("Volcano plot, showing the relationship between log2 fold-change",
                         "and evidence of differential expression."),
                hr(),
                plotOutput(ns("plot_ma")),
                helpText("MA plot, showing the relationship between mean expression",
                         "and log2 fold-change.")),
+      tabPanel("Interactive Plots", 
+               # inputPanel(
+               #   radioButtons(ns("radio_volcano_type"), label = "Plot type", )
+               # ),
+               #ggvisOutput(ns("ggvis_volcano")),
+               inputPanel(radioButtons(ns("radio_plotly_type"), "Plot type", choices=c("Volcano plot", "MA-plot"))),
+               plotlyOutput(ns("plotly_plot"))
+               # hr(),
+               # ggvisOutput(ns("ggvis_ma")),
+               # helpText("MA plot, showing the relationship between mean expression",
+               #          "and log2 fold-change.")),
+      ),
       tabPanel("Table", 
-               downloadButton(ns("download_table"), "Download (.csv)"),
-               dataTableOutput(ns("result_table")))
+               dataTableOutput(ns("result_table")),
+               hr(),
+               downloadButton(ns("download_table"), "Download (.csv)"))
       )
     )
   
@@ -385,9 +399,14 @@ tab_deUI <- function(id) {
     verbatimTextOutput(ns("debug"))
   )
   
-  sidebarLayout(
-    sidebarPanel(de.options),
-    mainPanel(main.panel.ui)
+  # sidebarLayout(
+  #   sidebarPanel(de.options),
+  #   mainPanel(main.panel.ui)
+  # )
+  fluidRow(
+    box(de.options, width=4),
+    conditionalPanel(condition = "true",
+                     box(main.panel.ui, width=8))
   )
 }
 
@@ -409,6 +428,15 @@ tab_deServer <- function(input, output, session, sessionData) {
   # this is where we store the analysis results
   results <- reactiveValues(data=list())
   
+  # reset results when data changes
+  observe({
+    dataframe()
+    
+    print("dataframe changed")
+    
+    # results$data <- list()
+  })
+  
   # enable the Go button when required info is entered
   observe({
     ready <- switch(input$sel_method,
@@ -423,30 +451,15 @@ tab_deServer <- function(input, output, session, sessionData) {
     }
   })
 
-  # do edgeR when button is clicked
-  observeEvent(input$btnGo, {
-    res <- switch(input$sel_method,
-                    "edger_classic"=edgeR_classic$result(),
-                    "edgeR_glm"=NULL,
-                    "deseq2"=deseq2$result())
-    
-    print(res$id)
-    
-    if (is.na(res$error)) {
-      results$data[[ res$id ]] <- res
-    }
-  })
-
-  observeEvent(input$button_delete, {
-    results$data[[ input$sel_result ]] <- NULL
-  })
-  
   # observe new results and update the select input and name for next analysis  
   observe({
+    print("updating results")
+    
     updateTextInput(session, "txt_name", value = paste("Differential expression", length(names(results$data)) + 1))
     updateSelectInput(session, "sel_result", choices = names(results$data), selected = rev(names(results$data))[1])
   })
   
+  # get the selected result
   result <- reactive({
     req(input$sel_result)
     
@@ -454,22 +467,35 @@ tab_deServer <- function(input, output, session, sessionData) {
     
     results$data[[ input$sel_result ]]
   })
+  
+  # 
+  result.table <- reactive({
+    tab <- result()$tab
+    
+    tab$Result <- "No Change"
+    tab[ result()$genes.up, ]$Result <- "Up"
+    tab[ result()$genes.down, ]$Result <- "Down"
+
+    tab
+  })
 
   output$download_table <- downloadHandler(
     filename = function() {
       paste0("d-fferential-", Sys.Date(), "-", result()$id, ".csv")
     },
     content = function(file) {
-      write.csv(result()$tab, file)
+      write.csv(result.table(), file)
     }
   )
   
-  
   # show the results table
   output$result_table <- renderDataTable({
-    DT::datatable(result()$tab, options = list(scrollX = TRUE))
+    tab <- result.table()
+    
+    DT::datatable(tab, options = list(scrollX = TRUE), filter="top")
   })
   
+  # summary of the analysis
   output$html_res_params <- renderText({
     res <- result()
     
@@ -480,15 +506,15 @@ tab_deServer <- function(input, output, session, sessionData) {
            "<b>LogFC cutoff:</b> ", res$lfc, "<br/>")
   })
 
-  de.result.data <- reactive({
-    tab <- result()$tab
-    res <- result()
-    
+  # normalized results (independent of test used)
+  de.result.data <- function(res) {
+    tab <- res$tab
+
     lfc <- switch(res$method,
                   "edgeR classic"=tab$logFC,
                   "edgeR_glm"=NULL,
                   "DESeq2"=tab$log2FoldChange)
-    
+
     logCPM <- switch(res$method,
                   "edgeR classic"=tab$logCPM,
                   "edgeR_glm"=NULL,
@@ -498,45 +524,92 @@ tab_deServer <- function(input, output, session, sessionData) {
                   "edgeR classic"=tab$FDR,
                   "edgeR_glm"=NULL,
                   "DESeq2"=tab$padj)
+
+    data.frame(GeneID=rownames(tab), logFC=lfc, logCPM=logCPM, FDR=fdr, logFDR=-log10(fdr))
+  }
+  
+  volcano.plot.fun <- function(res) {
+    tab <- de.result.data(res)
+    tab$Significant <- tab$FDR < res$fdr & abs(tab$logFC) >= res$lfc
     
-    data.frame(logFC=lfc, logCPM=logCPM, FDR=fdr, logFDR=-log10(fdr))
-  })
-    
+    function() {
+      ggplot(tab) +
+        geom_point(aes(x=logFC, y=logFDR, col=Significant), size=0.75) +
+        scale_color_manual(values=c("black", "red")) +
+        geom_vline(xintercept=c(-res$lfc, res$lfc), lty="dashed") +
+        theme(legend.position = "none")
+    }
+  }
+  
+  ma.plot.fun <- function(res) {
+    tab <- de.result.data(res)
+    tab$Significant <- tab$FDR < res$fdr & abs(tab$logFC) >= res$lfc
+
+    function() {    
+      ggplot(tab) + 
+        geom_point(aes(x=logCPM, y=logFC, col=Significant), size=0.75) +
+        scale_color_manual(values=c("black", "red")) +
+        geom_vline(xintercept=0, lty="dashed") +
+        theme(legend.position = "none")
+    }
+  }
+  
   # show the volcano plot
   output$volcano_plot <- renderPlot({
-    tab <- de.result.data()
-    res <- result()
-    
-    tab$Significant <- tab$FDR < res$fdr & abs(tab$logFC) >= res$lfc
-    
-    ggplot(tab) + 
-      geom_point(aes(x=logFC, y=logFDR, col=Significant), size=0.75) +
-      scale_color_manual(values=c("black", "red")) +
-      geom_vline(xintercept=0, lty="dashed") +
-      theme(legend.position = "none")
+    result()$volcano.plot.fun()
   })
-
+  
   # show the volcano plot
   output$plot_ma <- renderPlot({
-    tab <- de.result.data()
+    result()$ma.plot.fun()
+  })
+  
+  # show the volcano plot
+  output$plotly_plot <- renderPlotly({
     res <- result()
+    tab <- de.result.data(res)
     
     tab$Significant <- tab$FDR < res$fdr & abs(tab$logFC) >= res$lfc
     
-    ggplot(tab) + 
-      geom_point(aes(x=logCPM, y=logFC, col=Significant), size=0.75) +
-      scale_color_manual(values=c("black", "red")) +
-      geom_vline(xintercept=0, lty="dashed") +
-      theme(legend.position = "none")
+    if (input$radio_plotly_type == "Volcano plot") {
+      plot_ly(tab, x=~logFC, y=~logFDR, color=~Significant, type="scatter", colors=c("black", "red"),
+              text = ~paste("GeneID:", GeneID, "<br>logCPM:", logCPM, "<br>logFC:", logFC, '<br>FDR:', FDR))
+    } else if (input$radio_plotly_type == "MA-plot") {
+      plot_ly(tab, x=~logCPM, y=~logFC, color=~Significant, type="scatter", colors=c("black", "red"),
+              text = ~paste("GeneID:", GeneID, "<br>logCPM:", logCPM, "<br>logFC:", logFC, '<br>FDR:', FDR))
+    }
   })
   
-  output$debug <- renderPrint({
-    tab <- de.result.data()
+  # do analysis when button is clicked
+  observeEvent(input$btnGo, {
+    res <- switch(input$sel_method,
+                  "edger_classic"=edgeR_classic$result(),
+                  "edgeR_glm"=NULL,
+                  "deseq2"=deseq2$result())
     
-    print(nearPoints(tab, input$volcano_plot_click, addDist = TRUE,
-                     xvar = "logFC", yvar="logFDR"))
+    res$volcano.plot.fun <- volcano.plot.fun(res)
+    res$ma.plot.fun <- ma.plot.fun(res)
+    
+    if (is.na(res$error)) {
+      results$data[[ res$id ]] <- res
+    }
   })
   
+  observeEvent(input$button_delete, {
+    results$data[[ input$sel_result ]] <- NULL
+  })
+
+  # make the results panel show only if there are any results
+  output$showResults <- reactive({
+    # print("show results")
+    # print(length(results$data) > 0)
+    # 
+    # length(results$data) > 0
+    TRUE
+  })
+  outputOptions(output, "showResults", suspendWhenHidden = FALSE)
+  
+  # return results
   sessionData$de_results <- results
   
   return(sessionData)

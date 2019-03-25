@@ -25,6 +25,8 @@ tab_importUI <- function(id, datasets) {
                        helpText("Gene names should be on the first column,",
                                 "and every other column should contain the raw count data for each sample."),
                        mod_import_tableUI(ns("table_import")),
+                       selectInput(ns("sel_count_genes"), label = "Gene names", choices = NULL, multiple = FALSE),
+                       selectInput(ns("sel_count_columns"), label = "Columns", choices = NULL, multiple = TRUE),
                        hr(),
                        h4("Sample Metadata (Optional)"),
                        helpText("Sample names should appear in the first column."),
@@ -34,9 +36,13 @@ tab_importUI <- function(id, datasets) {
                      mod_import_datasetUI(ns("dataset_import"), datasets))
   )
   
-  sidebarLayout(
-    sidebarPanel(import.ui),
-    mainPanel(panels.ui))
+  # sidebarLayout(
+  #   sidebarPanel(import.ui),
+  #   mainPanel(panels.ui))
+  
+  fluidRow(
+    box(import.ui, width=4),
+    box(panels.ui, width=8))
 }
 
 #' Server function for table loader module
@@ -46,26 +52,57 @@ tab_importServer <- function(input, output, session, datasets, sessionData) {
   
   fileImportData <- callModule(mod_import_tableServer, "table_import", stringsAsFactors = FALSE)
   metadataImportData <- callModule(mod_import_tableServer, "table_metadata_import", stringsAsFactors = FALSE)
-  
   datasetImportData <- callModule(mod_import_datasetServer, "dataset_import", datasets)
+  
+  raw.counts.dataframe <- reactive({
+    req(input$radioImport)
+    
+    if (input$radioImport == "file") {
+      req(fileImportData$dataframe())
+      
+      df <- fileImportData$dataframe()
+      
+      return(df)
+    } else {
+      return (NULL)
+    }
+  })
   
   dataframe <- reactive({
     req(input$radioImport)
     
     if (input$radioImport == "file") {
-      req(fileImportData$dataframe())
+      req(input$sel_count_columns, input$sel_count_genes)
+      
+      df <- isolate(raw.counts.dataframe())
+
+      genes <- rownames(df)
+      if (input$sel_count_genes != "Row names")
+        genes <- df[ , input$sel_count_genes ]
+      
+      validate(need(all(duplicated(genes) == FALSE), message = "Gene names in count data must be unique."))
+      
+      df <- df[ , input$sel_count_columns ]
+      rownames(df) <- genes
     } else {
       req(datasetImportData$dataframe())
+      
+      df <- datasetImportData$dataframe()
     }
     
-    df <- switch(input$radioImport,
-           "file"=fileImportData$dataframe(),
-           "dataset"=datasetImportData$dataframe())
-    
-    rownames(df) <- df[, 1]
-    df[, 1] <- NULL
     
     return(df)
+  })
+  
+  observe({
+    df <- raw.counts.dataframe()
+    
+    updateSelectInput(session, "sel_count_genes", 
+                      choices=c("Row names", colnames(df)),
+                      selected="Row names")
+    updateSelectInput(session, "sel_count_columns", 
+                      choices=colnames(raw.counts.dataframe()),
+                      selected=colnames(raw.counts.dataframe())[-1])
   })
 
   metadata <- reactive({
@@ -75,13 +112,15 @@ tab_importServer <- function(input, output, session, datasets, sessionData) {
            "file"=metadataImportData$dataframe(),
            "dataset"=datasetImportData$metadata())
     
+    if (is.null(df)) {
+      df <- data.frame(Sample=colnames(dataframe()))
+    } 
+    
     rownames(df) <- df[, 1]
-    df[, 1] <- NULL
+    colnames(df)[1] <- "Sample"
     
     return(df)
   })
-  
-  #observeEvent(dataframe())
   
   # show the summary
   output$table_summary1 <- renderUI({
@@ -109,8 +148,7 @@ tab_importServer <- function(input, output, session, datasets, sessionData) {
     
     return(df[ 1:nr, 1:nc ])
   }, rownames = TRUE)
-  
-  
+
   output$table_metadata <- renderTable({
     df <- metadata()
     
@@ -118,8 +156,6 @@ tab_importServer <- function(input, output, session, datasets, sessionData) {
     
     return(df)
   }, rownames = TRUE)
-  
-
   
   sessionData$dataframe <- dataframe
   sessionData$metadata <- metadata

@@ -41,16 +41,22 @@ mod_GOUI <- function(id, ensembl) {
     verbatimTextOutput(ns("debug"))
   )
   
-  sidebarLayout(
-    sidebarPanel(go.options),
-    mainPanel(main.panel.ui)
+  # sidebarLayout(
+  #   sidebarPanel(go.options),
+  #   mainPanel(main.panel.ui)
+  # )
+  fluidRow(
+    box(go.options, width=4),
+    box(main.panel.ui, width=8)
   )
   
 }
 
 mod_GOServer <- function(input, output, session, sessionData, ensembl) {
   
+  print("starting mod go")
   ensembl_datasets <- listDatasets(ensembl)
+  print(head(ensembl_datasets))
   
   results <- reactiveValues()
   
@@ -97,6 +103,8 @@ mod_GOServer <- function(input, output, session, sessionData, ensembl) {
   
   # Observe a change in the selected annotation and update available attributes
   observe({
+    req(input$sel_annotation)
+    
     dataset.name <- ensembl_datasets$dataset[ match(input$sel_annotation, ensembl_datasets$description) ]
     mart <- useEnsembl(biomart="ensembl", dataset=dataset.name)
         

@@ -36,9 +36,6 @@ mod_import_datasetServer <- function(input, output, session, datasets) {
        name=name)
 }
 
-
-
-
 #' UI function for table import module
 mod_import_tableUI <- function(id) {
   ns <- NS(id)
@@ -68,25 +65,31 @@ mod_import_tableUI <- function(id) {
 #' Server function for table loader module
 #' 
 #' @return A dataframe as a reactive value.
-mod_import_tableServer <- function(input, output, session, stringsAsFactors) {
+mod_import_tableServer <- function(input, output, session, stringsAsFactors=FALSE) {
   # get the file
-  fileHandle <- reactive({
-    validate(need(input$file, message = FALSE))
-    
-    input$file
-  })
+  # fileHandle <- reactive({
+  #   validate(need(input$file, message = FALSE))
+  #   
+  #   input$file
+  # })
   
   # parse into a data.frame
   dataframe <- reactive({
-    read.table(fileHandle()$datapath,
-             header = input$heading, 
-             sep = input$sep,
-             quote = input$quote,
-             stringsAsFactors = stringsAsFactors)
+    if (!is.null(input$file)) {
+      read.table(input$file$datapath,
+               header = input$heading, 
+               sep = input$sep,
+               quote = input$quote,
+               stringsAsFactors = stringsAsFactors,
+               check.names = FALSE)
+    } else {
+      return (NULL)
+    }
   })
   
   name <- reactive({
-    fileHandle()$filename
+    #fileHandle()$filename
+    return (NULL)
   })
   
   return(list(dataframe=dataframe,
