@@ -415,7 +415,7 @@ tab_deUI <- function(id) {
     h4("Differential Expression Options"),
     selectInput(ns("sel_method"), "Method", 
                 choices=c("edgeR classic" = "edger_classic", 
-                          "edgeR GLM" = "edgeR_glm",
+                          #"edgeR GLM" = "edgeR_glm", # aggs: uncomment it; it's not implemented yet. 
                           "DESeq2" = "deseq2"), selected = "edgeR classic"),
     hr(),
     conditionalPanel(condition = paste0("input['", ns("sel_method"), "']", " == 'edger_classic'"), 
