@@ -115,6 +115,44 @@ mod_edgeRClassicServer <- function(input, output, session, dataframe, de.input) 
       incProgress(1/n, detail = "Calculating norm factors...")
       y <- calcNormFactors(y)
       
+      #--------------------------------------------------------------------
+      # aggs: perform quality-control assessment 
+      
+      incProgress(1/n, detail = "Plot MDS...")
+      mds <- plotMDS( x = y, plot = FALSE) # MDS data 
+    
+      colData <- data.frame( "condition" = conditions) # create meta tbl df
+      rownames(colData) <- colnames(counts) # add row names to df
+      
+      # create a data frame with the MDS (PCoA) coordinates
+      mds_coord <- data.frame("Group" = names(mds$x), 
+                               #"Samples" = rownames(colData),
+                               "Condition" = colData$condition,
+                               "x_axis" = mds$x, 
+                               "y_axis" = mds$y)
+      
+      # use ggplot to plot MDS (PCoA) coordinates - condition var
+      dim_plot <- ggplot(mds_coord,
+                         aes(x = x_axis, 
+                             y = y_axis, 
+                             label = Group)) + 
+        geom_point(aes(color = Condition), 
+                   size = 3) + 
+        ggrepel::geom_text_repel(size = 3.5) +
+        xlab("Leading logFC dim 1") + 
+        ylab("Leading logFC dim 2")
+      
+      incProgress(1/n, detail = "Calculating CPM to heatmap...")
+      logcpm <- cpm( y = y, log=TRUE )
+      
+      corr_mtx <- cor( logcpm ) # mtx and correlation mtx of logCPM trans
+  
+      incProgress(1/n, detail = "Plot sample-to-sample heatmap...")
+      heat_plot <- heatmaply::ggheatmap( corr_mtx, row_dend_left = TRUE, 
+                                         col_side_colors = colData$condition) # sample-to-sample heatmap
+      
+      #--------------------------------------------------------------------
+      
       incProgress(1/n, detail = "Estimating dispersions...")
       y <- estimateDisp(y)
       
@@ -143,6 +181,9 @@ mod_edgeRClassicServer <- function(input, output, session, dataframe, de.input) 
       fdr = input$num_fdr,
       lfc = input$num_logfc,
       table = topgenes$table,
+      plot_dim = dim_plot, # aggs
+      plot_heat = heat_plot, # aggs 
+      corr_mtx = corr_mtx, # aggs
       genes.up = rownames(topgenes$table)[ which(topgenes$table$FDR < input$num_fdr & topgenes$table$logFC >= input$num_logfc) ],
       genes.down = rownames(topgenes$table)[ which(topgenes$table$FDR < input$num_fdr & topgenes$table$logFC <= -input$num_logfc) ],
       genes.diff = rownames(topgenes$table)[ which(topgenes$table$FDR < input$num_fdr & abs(topgenes$table$logFC) >= input$num_logfc) ]
@@ -286,6 +327,32 @@ mod_deseq2Server <- function(input, output, session, dataframe, de.input) {
                                     colData = colData, 
                                     design = ~condition)
       
+      #--------------------------------------------------------------------
+      # aggs: perform quality-control assessment 
+
+      r_dds <- rlog( object = dds, blind = TRUE ) # rlog transformation - it's blind to the exp design
+      pcaCoordData <- plotPCA( object = r_dds, 
+                      intgroup = "condition", 
+                      returnData = TRUE ) # pca data by condition to plot below
+      varPCs <- round(100 * attr(pcaCoordData, "percentVar") ) # get PCs variance
+      
+      dim_plot <- ggplot(pcaCoordData,
+                         aes(x = PC1, 
+                             y = PC2, 
+                             label = name)) + 
+        geom_point(aes(color = group), 
+                   size = 3) + 
+        ggrepel::geom_text_repel(size = 3.5) +
+        xlab(paste0("PC1 (",varPCs[1],"% explained variance)")) +
+        ylab(paste0("PC2 (",varPCs[2],"% explained variance)")) 
+      
+
+      corr_mtx <- cor( assay( r_dds ) ) # mtx and correlation mtx of rlog trans
+      heat_plot <- heatmaply::ggheatmap( corr_mtx, row_dend_left = TRUE, 
+                              col_side_colors = colData$condition) # sample-to-sample heatmap
+      
+      #--------------------------------------------------------------------
+      
       dds <- DESeq(dds)
       res <- results(dds)
     })
@@ -310,6 +377,9 @@ mod_deseq2Server <- function(input, output, session, dataframe, de.input) {
       fdr = input$num_fdr,
       lfc = input$num_logfc,
       table = tab,
+      plot_dim = dim_plot, # aggs
+      plot_heat = heat_plot, # aggs
+      corr_mtx = corr_mtx, # aggs
       genes.up = rownames(tab)[ which(tab$padj < input$num_fdr & tab$log2FoldChange >= input$num_logfc) ],
       genes.down = rownames(tab)[ which(tab$padj < input$num_fdr & tab$log2FoldChange <= -input$num_logfc) ],
       genes.diff = rownames(tab)[ which(tab$padj < input$num_fdr & abs(tab$log2FoldChange) >= input$num_logfc) ]
@@ -361,7 +431,21 @@ tab_deUI <- function(id) {
     htmlOutput(ns("html_res_params")),
     hr(),
     tabsetPanel(
-      tabPanel("Plots", 
+      #---------------------------------------------------------------------------------------------------------------------
+      # aggs: add QC plots tab
+      tabPanel("QC Plots", 
+               plotOutput(ns("dim_plot")),
+               helpText("MDS (in the case of EdgeR) or PCA (in the case of DESeq2) plot 
+                        showing the variability among groups. In the case of MDS, 
+                        the plot represents the top 500 genes logCPM transformed. 
+                        In the case of PCA, the plot represents the top 500 most 
+                        variable genes rlog transformed."), 
+               hr(),
+               plotOutput(ns("heat_plot")),
+               helpText("Heatmap plot highlighting the sample-to-sample variability.")
+      ),
+      #---------------------------------------------------------------------------------------------------------------------
+      tabPanel("DE Plots", 
                # inputPanel(
                #   radioButtons(ns("radio_volcano_type"), label = "Plot type", )
                # ),
@@ -377,7 +461,9 @@ tab_deUI <- function(id) {
                #   radioButtons(ns("radio_volcano_type"), label = "Plot type", )
                # ),
                #ggvisOutput(ns("ggvis_volcano")),
-               inputPanel(radioButtons(ns("radio_plotly_type"), "Plot type", choices=c("Volcano plot", "MA-plot"))),
+               inputPanel(radioButtons(ns("radio_plotly_type"), "Plot type", 
+                                       choices=c("MDS/PCA", "Heatmap", 
+                                                 "Volcano plot", "MA-plot"))), # aggs: add QC plots
                plotlyOutput(ns("plotly_plot"))
                # hr(),
                # ggvisOutput(ns("ggvis_ma")),
@@ -554,6 +640,23 @@ tab_deServer <- function(input, output, session, sessionData) {
     }
   }
   
+  #------------------------------------------------------------------------------------------------------------  
+  # aggs: add pca_plot and heat_plot
+  
+  output$dim_plot <- renderPlot( {
+    
+    result()$plot_dim
+    
+  } )
+  
+  output$heat_plot <- renderPlot( {
+    
+    result()$plot_heat
+    
+  } )
+  
+  #------------------------------------------------------------------------------------------------------------
+  
   # show the volcano plot
   output$volcano_plot <- renderPlot({
     result()$volcano.plot.fun()
@@ -577,6 +680,11 @@ tab_deServer <- function(input, output, session, sessionData) {
     } else if (input$radio_plotly_type == "MA-plot") {
       plot_ly(tab, x=~logCPM, y=~logFC, color=~Significant, type="scatter", colors=c("black", "red"),
               text = ~paste("GeneID:", GeneID, "<br>logCPM:", logCPM, "<br>logFC:", logFC, '<br>FDR:', FDR))
+    } else if (input$radio_plotly_type == "MDS/PCA") { # aggs
+      ggplotly( p = result()$plot_dim )
+    } else if (input$radio_plotly_type == "Heatmap") { # aggs
+      heatmaply::heatmaply( x = result()$corr_mtx, row_dend_left = TRUE, 
+                 col_side_colors = result()$conditions)
     }
   })
   
