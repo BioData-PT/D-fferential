@@ -3,7 +3,7 @@
 # devtools::install_github('rstudio/DT')
 
 library(DT)
-
+  
 library(shiny)
 library(shinyBS)
 library(shinyjs)
@@ -19,6 +19,7 @@ library(DESeq2)
 library(plotly)
 #library("heatmaply") # aggs: it requires this package
 #library("ggrepel) # aggs: it requires this package for label annotation
+library(dplyr) # aggs: it requires dplyr
 library(pheatmap)
 
 # options(shiny.reactlog=TRUE)
