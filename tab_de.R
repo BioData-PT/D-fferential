@@ -115,6 +115,45 @@ mod_edgeRClassicServer <- function(input, output, session, dataframe, de.input) 
       incProgress(1/n, detail = "Calculating norm factors...")
       y <- calcNormFactors(y)
       
+      #--------------------------------------------------------------------
+      # aggs: perform quality-control assessment 
+      
+      incProgress(1/n, detail = "Plot MDS...")
+      mds <- plotMDS( x = y, plot = FALSE) # MDS data 
+    
+      colData <- data.frame( "condition" = conditions) # create meta tbl df
+      rownames(colData) <- colnames(counts) # add row names to df
+      
+      # create a data frame with the MDS (PCoA) coordinates
+      mds_coord <- data.frame("Group" = names(mds$x), 
+                               #"Samples" = rownames(colData),
+                               "Condition" = colData$condition,
+                               "x_axis" = mds$x, 
+                               "y_axis" = mds$y)
+      
+      # use ggplot to plot MDS (PCoA) coordinates - condition var
+      dim_plot <- ggplot(mds_coord,
+                         aes(x = x_axis, 
+                             y = y_axis, 
+                             label = Group)) + 
+        geom_point(aes(color = Condition), 
+                   size = 3) + 
+        ggrepel::geom_text_repel(size = 3.5) +
+        xlab("Leading logFC dim 1") + 
+        ylab("Leading logFC dim 2")
+      
+      incProgress(1/n, detail = "Calculating CPM to heatmap...")
+      logcpm <- cpm( y = y, log = TRUE )
+      norm_cpm <- cpm( y = y )
+      
+      corr_mtx <- cor( logcpm ) # mtx and correlation mtx of logCPM trans
+  
+      incProgress(1/n, detail = "Plot sample-to-sample heatmap...")
+      heat_plot <- heatmaply::ggheatmap( corr_mtx, row_dend_left = TRUE, 
+                                         col_side_colors = colData$condition ) # sample-to-sample heatmap
+      
+      #--------------------------------------------------------------------
+      
       incProgress(1/n, detail = "Estimating dispersions...")
       y <- estimateDisp(y)
       
@@ -143,6 +182,11 @@ mod_edgeRClassicServer <- function(input, output, session, dataframe, de.input) 
       fdr = input$num_fdr,
       lfc = input$num_logfc,
       table = topgenes$table,
+      plot_dim = dim_plot, # aggs
+      plot_heat = heat_plot, # aggs 
+      corr_mtx = corr_mtx, # aggs
+      ge_mtx_trans = logcpm, # aggs
+      ge_mtx_norm = norm_cpm, # aggs
       genes.up = rownames(topgenes$table)[ which(topgenes$table$FDR < input$num_fdr & topgenes$table$logFC >= input$num_logfc) ],
       genes.down = rownames(topgenes$table)[ which(topgenes$table$FDR < input$num_fdr & topgenes$table$logFC <= -input$num_logfc) ],
       genes.diff = rownames(topgenes$table)[ which(topgenes$table$FDR < input$num_fdr & abs(topgenes$table$logFC) >= input$num_logfc) ]
@@ -286,6 +330,37 @@ mod_deseq2Server <- function(input, output, session, dataframe, de.input) {
                                     colData = colData, 
                                     design = ~condition)
       
+      #--------------------------------------------------------------------
+      # aggs: perform quality-control assessment 
+
+      r_dds <- rlog( object = dds, blind = TRUE ) # rlog transformation - it's blind to the exp design
+      pcaCoordData <- plotPCA( object = r_dds, 
+                      intgroup = "condition", 
+                      returnData = TRUE ) # pca data by condition to plot below
+      varPCs <- round(100 * attr(pcaCoordData, "percentVar") ) # get PCs variance
+      
+      dim_plot <- ggplot(pcaCoordData,
+                         aes(x = PC1, 
+                             y = PC2, 
+                             label = name)) + 
+        geom_point(aes(color = group), 
+                   size = 3) + 
+        ggrepel::geom_text_repel(size = 3.5) +
+        xlab(paste0("PC1 (",varPCs[1],"% explained variance)")) +
+        ylab(paste0("PC2 (",varPCs[2],"% explained variance)")) 
+      
+
+      corr_mtx <- cor( assay( r_dds ) ) # mtx and correlation mtx of rlog trans
+      heat_plot <- heatmaply::ggheatmap( corr_mtx, #row_dend_left = TRUE, 
+                              col_side_colors = colData$condition ) # sample-to-sample heatmap
+      
+      
+      ## normalize counts and saved it 
+      dds_size_fct <- estimateSizeFactors( dds )
+      norm_counts <- counts( dds_size_fct, normalized = TRUE )
+      
+      #--------------------------------------------------------------------
+      
       dds <- DESeq(dds)
       res <- results(dds)
     })
@@ -310,6 +385,11 @@ mod_deseq2Server <- function(input, output, session, dataframe, de.input) {
       fdr = input$num_fdr,
       lfc = input$num_logfc,
       table = tab,
+      plot_dim = dim_plot, # aggs
+      plot_heat = heat_plot, # aggs
+      corr_mtx = corr_mtx, # aggs
+      ge_mtx_trans = assay(r_dds), # aggs
+      ge_mtx_norm = norm_counts, # aggs
       genes.up = rownames(tab)[ which(tab$padj < input$num_fdr & tab$log2FoldChange >= input$num_logfc) ],
       genes.down = rownames(tab)[ which(tab$padj < input$num_fdr & tab$log2FoldChange <= -input$num_logfc) ],
       genes.diff = rownames(tab)[ which(tab$padj < input$num_fdr & abs(tab$log2FoldChange) >= input$num_logfc) ]
@@ -345,7 +425,7 @@ tab_deUI <- function(id) {
     h4("Differential Expression Options"),
     selectInput(ns("sel_method"), "Method", 
                 choices=c("edgeR classic" = "edger_classic", 
-                          "edgeR GLM" = "edgeR_glm",
+                          #"edgeR GLM" = "edgeR_glm", # aggs: uncomment it; it's not implemented yet. 
                           "DESeq2" = "deseq2"), selected = "edgeR classic"),
     hr(),
     conditionalPanel(condition = paste0("input['", ns("sel_method"), "']", " == 'edger_classic'"), 
@@ -361,7 +441,26 @@ tab_deUI <- function(id) {
     htmlOutput(ns("html_res_params")),
     hr(),
     tabsetPanel(
-      tabPanel("Plots", 
+      #---------------------------------------------------------------------------------------------------------------------
+      # aggs: add QC plots tab
+      tabPanel("QC Plots", 
+               plotOutput(ns("dim_plot")),
+               helpText("MDS (in the case of EdgeR) or PCA (in the case of DESeq2) plot", 
+                        "showing the variability among groups. In the case of MDS", 
+                        "the plot represents the leading log-fold-change between", 
+                        "pair of samples based on the top 500 genes normalized.", 
+                        "In the case of PCA, the plot represents the top 500 most",
+                        "variable genes rlog transformed."), 
+               hr(),
+               plotOutput(ns("heat_plot")),
+               helpText("Heatmap plot highlighting the sample-to-sample variability", 
+                        "based on the Pearson correlation. In the case of edgeR,",
+                        "the logCPM transformed counts were used to determine the correlations", 
+                        "between sample-to-sample. In the case of DESeq2, the rlog transformed", 
+                        "counts were used to determine the Pearson correlations between sample-to-sample.")
+      ),
+      #---------------------------------------------------------------------------------------------------------------------
+      tabPanel("DE Plots", 
                # inputPanel(
                #   radioButtons(ns("radio_volcano_type"), label = "Plot type", )
                # ),
@@ -372,12 +471,48 @@ tab_deUI <- function(id) {
                plotOutput(ns("plot_ma")),
                helpText("MA plot, showing the relationship between mean expression",
                         "and log2 fold-change.")),
+      #---------------------------------------------------------------------------------------------------------------------
+      # aggs: add Downstream plots tab
+      tabPanel("Downstream Plots", 
+               plotOutput(ns("heat_de_plot")),
+               helpText("Heatmap highlighting the clustering of genes (rows), by regulation type,", 
+                        "and samples (columns), by condition, of genes differentially expressed.", 
+                        "Only the top 25 genes up- and downregulated are shown (if available,",
+                        "otherwise <25 or none, depending on the no. of DGE obtained).",
+                        "In the case of edgeR, it uses the log2 CPM counts normalized and scaled.", 
+                        "In the case of DESeq2, it uses the counts rlog transformed and scaled."), 
+               hr(),
+               plotOutput(ns("dot_dge_up_plot")),
+               helpText("Dot plot highlighting the top upregulated genes that were found among the", 
+                        "genes differentially expressed. The top upregulated genes means the genes", 
+                        "with the highest log fold-change values.", 
+                        "In the case of edgeR, the counts highlighted in the y-axis are normalized in CPM.", 
+                        "In the case of DESeq2, it uses the DESeq2 normalization method.", 
+                        "The y-axis appears log10 transformed.",
+                        "In the interactive tab, the genes with 0 counts here were substituted by 1e-06",  
+                        "in order to plot the interactive dot plot."), 
+               hr(),
+               plotOutput(ns("dot_dge_down_plot")),
+               helpText("Dot plot highlighting the top downregulated genes that were found among the", 
+                        "genes differentially expressed. The top downregulated genes means the genes", 
+                        "with the lowest log fold-change values.", 
+                        "In the case of edgeR, the counts highlighted in the y-axis are normalized in CPM.", 
+                        "In the case of DESeq2, it uses the DESeq2 normalization method.", 
+                        "The y-axis appears log10 transformed.",
+                        "In the interactive tab, the genes with 0 counts here were substituted by 1e-06",  
+                        "in order to plot the interactive dot plot.")),
+      
+      #---------------------------------------------------------------------------------------------------------------------
       tabPanel("Interactive Plots", 
                # inputPanel(
                #   radioButtons(ns("radio_volcano_type"), label = "Plot type", )
                # ),
                #ggvisOutput(ns("ggvis_volcano")),
-               inputPanel(radioButtons(ns("radio_plotly_type"), "Plot type", choices=c("Volcano plot", "MA-plot"))),
+               inputPanel(radioButtons(ns("radio_plotly_type"), "Plot type", 
+                                       choices=c("MDS/PCA", "Heatmap - QC", 
+                                                 "Volcano plot", "MA-plot", 
+                                                 "Heatmap - DE",
+                                                 "Dotplot - up", "Dotplot - down"))), # aggs: add QC plots
                plotlyOutput(ns("plotly_plot"))
                # hr(),
                # ggvisOutput(ns("ggvis_ma")),
@@ -554,6 +689,223 @@ tab_deServer <- function(input, output, session, sessionData) {
     }
   }
   
+  #------------------------------------------------------------------------------------------------------------  
+  # aggs: add de.heat.plot.fun
+  # it uses the rlog transformation of DESeq2 to plot DGE normalized and scaled 
+  # or it uses the log2 CPM normalized and scaled counts of edgeR
+  
+  de.heat.plot.fun <- function(res) {
+    tab <- de.result.data(res)
+    tab$Significant <- tab$FDR < res$fdr & abs(tab$logFC) >= res$lfc
+    mtx <- res$ge_mtx_trans
+    de_genes <- tab[ tab$Significant %in% "TRUE", ] # subset the df for DGE
+    topUp <- de_genes %>% 
+      filter( logFC > 0 ) %>% 
+      arrange( desc(logFC) ) %>% 
+      pull( GeneID ) %>% 
+      as.character(.)
+    topDown <- de_genes %>% 
+      filter( logFC < 0 ) %>% 
+      arrange( logFC ) %>% 
+      pull( GeneID ) %>% 
+      as.character(.)
+    if ( ( length(topUp) >= 25 ) & ( length(topDown) >= 25 ) ) {
+      topUp <- topUp[1:25]
+      topDown <- topDown[1:25]
+    } else if ( ( length(topUp) >= 25 ) & ( length(topDown) < 25 ) ) {
+      topUp <- topUp[1:25]
+      topDown <- topDown
+    } else if ( ( length(topUp) < 25 ) & ( length(topDown) >= 25 ) ) {
+      topUp <- topUp
+      topDown <- topDown[1:25]
+    } else {
+      topUp <- topUp
+      topDown <- topDown
+    }
+    topDE <- c( topUp, topDown )
+    #down_ge <- table(de_genes$logFC < 0 )["TRUE"]
+    #top_dge <- table(de_genes$logFC > 0 )["TRUE"] 
+    #colDataRow <- data.frame( "Regulation" = ifelse( de_genes$logFC < 0, paste0( "Downregulated (n=", down_ge, ")"), 
+    #                                                 paste0("Upregulated (n=", top_dge, ")") ) ) # df for row annt
+    colDataRow <- data.frame( "Regulation" = c( rep( "Upregulated", length(topUp) ), rep( "Downregulated", length(topDown) ) ) ) # df for row annt
+    rownames(colDataRow) <- topDE
+    mtx <- mtx[ topDE, ] # select only genes DGE
+    mtx <- scale(mtx) # scale - z-scores 
+    colDataCol <- data.frame( "Condition" = res$conditions ) # df for col annt
+    rownames(colDataCol) <- colnames(mtx) # add row names to df
+    heat_map_de <- heatmaply::ggheatmap(mtx , row_dend_left = TRUE,
+                                        col_side_colors = colDataCol$Condition, 
+                                        row_side_colors = colDataRow$Regulation, 
+                                        showticklabels = c(TRUE, TRUE) )
+    #heat_map_de <- pheatmap( mtx, 
+    #                         show_rownames = FALSE, 
+    #                         annotation_col = colDataCol, 
+    #                         annotation_row = colDataRow )
+    listOut <- list(
+      mtx = mtx, 
+      col_side_colors = colDataCol$Condition, 
+      row_side_colors = colDataRow$Regulation,
+      plot = heat_map_de
+    )
+    return(listOut)
+  }
+  #------------------------------------------------------------------------------------------------------------  
+  
+  #------------------------------------------------------------------------------------------------------------  
+  # aggs: add dot.plot.top.up.fun and dot.plot.top.down.fun
+  # it uses the normalized counts with the DESeq2 method
+  # or it uses the CPM normalized of edgeR of the top down and up regulated genes
+  
+  dot.plot.top.up.fun <- function(res) {
+    de_genes <- de.result.data(res)
+    mtx <- res$ge_mtx_norm
+    de_genes <- de_genes[ de_genes$FDR < res$fdr & abs(de_genes$logFC) >= res$lfc , ] # subset the df for DGE
+    topUp <- de_genes %>% 
+      filter( logFC > 0 ) %>% 
+      arrange( desc(logFC) ) %>% 
+      pull( GeneID ) %>% 
+      as.character(.)
+    topUp_len <- length( topUp )
+    if ( topUp_len >= 10 ){
+      dge_df <- mtx[ topUp[1:10], ] %>% 
+        as.data.frame(.)
+      conditions <- as.character( res$conditions )
+      names( conditions ) <- colnames( dge_df )
+      dge_df[ , "GeneID" ] <- factor( topUp[1:10], levels = topUp[1:10] ) 
+      dge_df <- tidyr::gather( dge_df, "Samples", "Counts", colnames(dge_df)[1:(ncol(dge_df)-1)] )
+      dge_df[ , "Condition" ] <- ifelse( dge_df$Samples %in% names( conditions[ conditions == "ConditionA" ] ), 
+                                         "ConditionA", "ConditionB" )
+      #browser()
+      #readr::write_tsv(dge_df, "/home/agsousa/Desktop/data.frame.tsv")
+      dot_plot <- 
+        ggplot( dge_df, aes( x = Samples, y = Counts, color = Condition, fill = Condition ) ) + 
+          geom_point() + 
+          facet_wrap( ~ GeneID ) + 
+          scale_y_log10() + ylab("Counts") + 
+          #theme_bw() +
+          theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) + 
+          ggtitle("Top 10 upregulated genes")
+    } else if ( (topUp_len > 0) & (topUp_len < 10) ) {
+      dge_df <- mtx[ topUp, ] %>% 
+        as.data.frame(.)
+      conditions <- as.character( res$conditions )
+      names( conditions ) <- colnames( dge_df )
+      dge_df[ , "GeneID" ] <- topUp
+      dge_df[ , "GeneID" ] <- factor( topUp, levels = topUp ) 
+      dge_df <- tidyr::gather( dge_df, "Samples", "Counts", colnames(dge_df)[1:(ncol(dge_df)-1)] )
+      dge_df[ , "Condition" ] <- ifelse( dge_df$Samples %in% names( conditions[ conditions == "ConditionA" ] ), 
+                                         "ConditionA", "ConditionB" )
+      dot_plot <- 
+          ggplot( dge_df, aes( x = Samples, y = Counts, color = Condition, fill = Condition ) ) + 
+          geom_point() + 
+          facet_wrap( ~ GeneID ) + 
+          scale_y_log10() + ylab("Counts") + 
+          #theme_bw() +
+          theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) + 
+          ggtitle( paste0("Top ", topUp_len, " upregulated genes") )
+    } else {
+      dot_plot <- 
+        ggplot() + 
+        ggtitle("There were not found DGE upregulated to plot!")
+    }
+    
+    return( dot_plot )
+  }
+  
+  #--------------------------------------------------------------------------------------------------------------
+  
+  dot.plot.top.down.fun <- function(res) {
+    de_genes <- de.result.data(res)
+    mtx <- res$ge_mtx_norm
+    de_genes <- de_genes[ de_genes$FDR < res$fdr & abs(de_genes$logFC) >= res$lfc , ] # subset the df for DGE
+    topDown <- de_genes %>% 
+      filter( logFC < 0 ) %>% 
+      arrange( desc(logFC) ) %>% 
+      pull( GeneID ) %>% 
+      as.character(.)
+    topDown_len <- length( topDown )
+    if ( topDown_len >= 10 ){
+      dge_df <- mtx[ topDown[1:10], ] %>% 
+        as.data.frame(.)
+      conditions <- as.character( res$conditions )
+      names( conditions ) <- colnames( dge_df )
+      dge_df[ , "GeneID" ] <- topDown[1:10]
+      dge_df[ , "GeneID" ] <- factor( topDown[1:10], levels = topDown[1:10] ) 
+      dge_df <- tidyr::gather( dge_df, "Samples", "Counts", colnames(dge_df)[1:(ncol(dge_df)-1)] )
+      dge_df[ , "Condition" ] <- ifelse( dge_df$Samples %in% names( conditions[ conditions == "ConditionA" ] ), 
+                                         "ConditionA", "ConditionB" )
+      dot_plot <-
+        ggplot( dge_df, aes( x = Samples, y = Counts, color = Condition, fill = Condition ) ) + 
+          geom_point() + 
+          facet_wrap( ~ GeneID ) + 
+          scale_y_log10() + ylab("Counts") + 
+          #theme_bw() +
+          theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) + 
+          ggtitle("Top 10 downregulated genes")
+    } else if ( (topDown_len > 0) & (topDown_len < 10) ) {
+      dge_df <- mtx[ topDown, ] %>% 
+        as.data.frame(.)
+      conditions <- as.character( res$conditions )
+      names( conditions ) <- colnames( dge_df )
+      dge_df[ , "GeneID" ] <- topDown
+      dge_df[ , "GeneID" ] <- factor( topDown, levels = topDown ) 
+      dge_df <- tidyr::gather( dge_df, "Samples", "Counts", colnames(dge_df)[1:(ncol(dge_df)-1)] )
+      dge_df[ , "Condition" ] <- ifelse( dge_df$Samples %in% names( conditions[ conditions == "ConditionA" ] ), 
+                                         "ConditionA", "ConditionB" )
+      dot_plot <-
+        ggplot( dge_df, aes( x = Samples, y = Counts, color = Condition, fill = Condition ) ) + 
+          geom_point + 
+          facet_wrap( ~ GeneID ) + 
+          scale_y_log10() + ylab("Counts") + 
+          #theme_bw() +
+          theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) + 
+          ggtitle( paste0("Top ", topDown_len, " downregulated genes") )
+    } else {
+      dot_plot <-
+        ggplot() + 
+        ggtitle("There were not found DGE downregulated to plot!")
+    }
+    return( dot_plot )
+  }
+  #------------------------------------------------------------------------------------------------------------ 
+  
+  
+  #------------------------------------------------------------------------------------------------------------  
+  # aggs: add pca_plot and heat_plot
+  
+  output$dim_plot <- renderPlot( {
+    
+    result()$plot_dim
+    
+  } )
+  
+  output$heat_plot <- renderPlot( {
+    
+    result()$plot_heat
+    
+  } )
+  
+  output$heat_de_plot <- renderPlot( {
+
+    result()$de.heat.plot.fun$plot
+    
+  } )
+  
+  output$dot_dge_up_plot <- renderPlot( {
+
+    result()$dot.plot.top.up.fun
+    
+  } )
+  
+  
+  output$dot_dge_down_plot <- renderPlot( {
+    
+    result()$dot.plot.top.down.fun
+    
+  } )
+  
+  #------------------------------------------------------------------------------------------------------------
+  
   # show the volcano plot
   output$volcano_plot <- renderPlot({
     result()$volcano.plot.fun()
@@ -577,7 +929,35 @@ tab_deServer <- function(input, output, session, sessionData) {
     } else if (input$radio_plotly_type == "MA-plot") {
       plot_ly(tab, x=~logCPM, y=~logFC, color=~Significant, type="scatter", colors=c("black", "red"),
               text = ~paste("GeneID:", GeneID, "<br>logCPM:", logCPM, "<br>logFC:", logFC, '<br>FDR:', FDR))
-    }
+    } else if (input$radio_plotly_type == "MDS/PCA") { # aggs
+      plot_dim <- result()$plot_dim + 
+        theme_bw()
+      ggplotly( p = plot_dim )
+    } else if (input$radio_plotly_type == "Heatmap - QC") { # aggs
+      heatmaply::heatmaply( x = result()$corr_mtx, row_dend_left = TRUE, 
+                 col_side_colors = result()$conditions)
+    } else if (input$radio_plotly_type == "Heatmap - DE") { # aggs
+      heat_de <-  result()$de.heat.plot.fun
+      heatmaply::heatmaply( x = heat_de$mtx, row_dend_left = TRUE, 
+                            col_side_colors = heat_de$col_side_colors, 
+                            row_side_colors = heat_de$row_side_colors )
+    } else if (input$radio_plotly_type == "Dotplot - up") { # aggs
+      dot_plot_up <- result()$dot.plot.top.up.fun
+      dot_plot_up$data[ dot_plot_up$data$Counts == 0, "Counts" ] <- 1e-06 # add this fake low no. 
+      #to avoid infinite numbers when scaling to log10()
+      dot_plot_up <- dot_plot_up + 
+        theme_bw() +
+        theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+      ggplotly( p = dot_plot_up )
+    } else if (input$radio_plotly_type == "Dotplot - down") { # aggs
+      dot_plot_down <- result()$dot.plot.top.down.fun
+      dot_plot_down$data[ dot_plot_down$data$Counts == 0, "Counts" ] <- 1e-06 # add this fake low no. 
+      #to avoid infinite numbers when scaling to log10()
+      dot_plot_down <- dot_plot_down + 
+        theme_bw() + 
+        theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+      ggplotly( p = dot_plot_down )
+    } 
   })
   
   # do analysis when button is clicked
@@ -589,6 +969,9 @@ tab_deServer <- function(input, output, session, sessionData) {
     
     res$volcano.plot.fun <- volcano.plot.fun(res)
     res$ma.plot.fun <- ma.plot.fun(res)
+    res$de.heat.plot.fun <- de.heat.plot.fun(res) # aggs
+    res$dot.plot.top.up.fun <- dot.plot.top.up.fun(res) # aggs
+    res$dot.plot.top.down.fun <- dot.plot.top.down.fun(res) # aggs
     
     if (is.na(res$error)) {
       results$data[[ res$id ]] <- res

@@ -3,7 +3,7 @@
 # devtools::install_github('rstudio/DT')
 
 library(DT)
-
+  
 library(shiny)
 library(shinyBS)
 library(shinyjs)
@@ -17,6 +17,9 @@ library(DESeq2)
 
 #library(ggvis)
 library(plotly)
+#library("heatmaply") # aggs: it requires this package
+#library("ggrepel) # aggs: it requires this package for label annotation
+library(dplyr) # aggs: it requires dplyr
 library(pheatmap)
 
 # options(shiny.reactlog=TRUE)
@@ -28,10 +31,10 @@ library(pheatmap)
 library(ggplot2)
 library(reshape2)
 
-source("mod_filter_table.R")
+#source("mod_filter_table.R")
 source("tab_import.R")
-source("tab_visualize.R")
-source("tab_plots.R")
+#source("tab_visualize.R") # aggs: create a new one 
+#source("tab_plots.R") # aggs: change 'tab_plots.R' --> 'tab_visualize.R  '
 source("tab_de.R")
 source("mod_GO.R")
 source("tab_export.R")
@@ -89,15 +92,15 @@ ui <- dashboardPage(
   dashboardSidebar(
     sidebarMenu(
       menuItem("Import Data", tabName="ImportData", icon = icon("cloud-upload"), selected = TRUE),
-      menuItem("Visualize Data", tabName="VisualizeData"),
-      menuItem("Differential Expression", tabName="DifferentialExpression"),
-      menuItem("GO Enrichment", tabName="GOEnrichment"),
-      menuItem("Export Analysis", tabName = "ExportAnalysis"))
+      #menuItem("Visualize Data", tabName="VisualizeData"),
+      menuItem("Differential Expression", tabName="DifferentialExpression", icon = icon("not-equal")),
+      menuItem("GO Enrichment", tabName="GOEnrichment", icon = icon("sitemap")), # aggs: add icon
+      menuItem("Export Analysis", tabName = "ExportAnalysis", icon = icon("cloud-download") )) # aggs: add icon
   ),
   dashboardBody(
     tabItems(
       tabItem("ImportData", tab_importUI("tab_import", example.datasets)),
-      tabItem("VisualizeData", tab_visualizeUI("tab_visualize")),
+      #tabItem("VisualizeData", tab_visualizeUI("tab_visualize")),
       tabItem("DifferentialExpression", tab_deUI("tab_de")),
       tabItem("GOEnrichment", mod_GOUI("mod_GO", ensembl)),
       tabItem("ExportAnalysis", tab_exportUI("tab_export")))
@@ -116,7 +119,7 @@ server <- function(input, output, session) {
   sessionData <- callModule(tab_importServer, "tab_import", example.datasets, sessionData)
 
   # plots tab
-  sessionData <- callModule(tab_visualizeServer, "tab_visualize", sessionData)
+  #sessionData <- callModule(tab_visualizeServer, "tab_visualize", sessionData)
   
   # DE tab
   sessionData <- callModule(tab_deServer, "tab_de", sessionData)
@@ -139,4 +142,5 @@ server <- function(input, output, session) {
 }
 
 shinyApp(ui, server)
+
 

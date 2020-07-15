@@ -111,7 +111,7 @@ mod_GOServer <- function(input, output, session, sessionData, ensembl) {
     atts <- listAttributes(mart = mart)
     atts.gene <- grep("gene", atts$name, value=TRUE)
     
-    possible.choices <- c("ensembl_gene_id", "entrezgene")
+    possible.choices <- c("ensembl_gene_id", "entrezgene_id")
     
     atts.gene <- intersect(atts.gene, possible.choices)
     
