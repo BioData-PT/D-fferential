@@ -1,3 +1,6 @@
+> [!WARNING]  
+> **This tool is no longer maintaned.** For inquiries about this or other BioData.pt | ELIXIR Portugal tools and services, please reach out to <info@biodata.pt>.
+
 # D-fferential
 Shiny app for differential expression analysis
 
